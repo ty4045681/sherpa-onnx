@@ -22,6 +22,8 @@ namespace {
 // is 5.12 s at the 25 Hz encoder grid, enough for the live graph window with
 // headroom.
 constexpr int32_t kMaxRecentKeywordFrames = 128;
+constexpr int32_t kTopTokensPerFrame = 4;
+constexpr float kSilenceDb = -100.0f;
 
 }  // namespace
 
@@ -39,6 +41,7 @@ TransducerKeywordResult TransducerKeywordDecoder::GetEmptyResult() const {
 
 void TransducerKeywordDecoder::Decode(
     Ort::Value encoder_out, OnlineStream **ss,
+    const std::vector<std::vector<float>> &frame_energy_db,
     std::vector<TransducerKeywordResult> *result) {
   std::vector<int64_t> encoder_out_shape =
       encoder_out.GetTensorTypeAndShapeInfo().GetShape();
@@ -85,6 +88,20 @@ void TransducerKeywordDecoder::Decode(
 
     Ort::Value cur_encoder_out =
         GetEncoderOutFrame(model_->Allocator(), &encoder_out, t);
+    std::vector<float> frame_norm(batch_size, 0);
+    {
+      auto shape = cur_encoder_out.GetTensorTypeAndShapeInfo().GetShape();
+      int32_t dim = static_cast<int32_t>(shape.back());
+      const float *data = cur_encoder_out.GetTensorData<float>();
+      for (int32_t b = 0; b != batch_size; ++b) {
+        const float *row = data + static_cast<int64_t>(b) * dim;
+        float sum = 0;
+        for (int32_t d = 0; d != dim; ++d) {
+          sum += row[d] * row[d];
+        }
+        frame_norm[b] = std::sqrt(sum);
+      }
+    }
     cur_encoder_out =
         Repeat(model_->Allocator(), &cur_encoder_out, hyps_row_splits);
     Ort::Value logit =
@@ -166,6 +183,32 @@ void TransducerKeywordDecoder::Decode(
       frame_state.level =
           best_hyp.context_state ? best_hyp.context_state->level : 0;
       frame_state.score = best_hyp.log_prob;
+      frame_state.encoder_norm = frame_norm[b];
+      frame_state.energy_db =
+          b < static_cast<int32_t>(frame_energy_db.size()) &&
+                  t < static_cast<int32_t>(frame_energy_db[b].size())
+              ? frame_energy_db[b][t]
+              : kSilenceDb;
+
+      // The joiner's own top tokens for the best parent path at this frame.
+      // logprobs holds the normalized distribution before the path score is
+      // added, so a token's value is its acoustic log probability here.
+      int32_t best_parent = start;
+      for (int32_t i = start + 1; i < end; ++i) {
+        if (prev[i].log_prob > prev[best_parent].log_prob) {
+          best_parent = i;
+        }
+      }
+      const float *parent_logprob = logprobs.data() + best_parent * vocab_size;
+      auto top_tokens = TopkIndex(parent_logprob, vocab_size, kTopTokensPerFrame);
+      frame_state.top_tokens.reserve(top_tokens.size());
+      for (auto token : top_tokens) {
+        KeywordTokenScore score;
+        score.token = token;
+        score.log_prob = parent_logprob[token];
+        frame_state.top_tokens.push_back(std::move(score));
+      }
+
       frame_state.hypotheses.reserve(hyps.Size());
       for (const auto &entry : hyps) {
         const Hypothesis &h = entry.second;

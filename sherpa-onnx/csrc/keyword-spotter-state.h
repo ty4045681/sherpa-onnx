@@ -31,6 +31,13 @@ struct ContextGraphState {
   std::vector<ContextGraphNodeState> nodes;
 };
 
+// One token and the joiner's log probability for it at a frame.
+struct KeywordTokenScore {
+  int32_t token = -1;
+  std::string piece;
+  float log_prob = 0;
+};
+
 // One decoder path and the context graph node it currently sits on.
 struct KeywordHypothesisState {
   int32_t level = 0;
@@ -53,6 +60,12 @@ struct KeywordFrameState {
   int32_t frame_index = 0;
   int32_t level = 0;
   double score = 0;
+  // Input energy of the frame's feature block, and the L2 norm of its encoder
+  // output, both measured by the decoder.
+  float energy_db = -100.0f;
+  float encoder_norm = 0;
+  // The joiner's best tokens for this frame, before the context score.
+  std::vector<KeywordTokenScore> top_tokens;
   std::vector<KeywordHypothesisState> hypotheses;
 };
 

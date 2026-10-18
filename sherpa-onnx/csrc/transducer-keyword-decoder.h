@@ -52,7 +52,10 @@ class TransducerKeywordDecoder {
 
   TransducerKeywordResult GetEmptyResult() const;
 
+  // frame_energy_db[i][t] is the input energy of stream i's encoder frame t in
+  // this chunk, measured from the same feature block the encoder saw.
   void Decode(Ort::Value encoder_out, OnlineStream **ss,
+              const std::vector<std::vector<float>> &frame_energy_db,
               std::vector<TransducerKeywordResult> *result);
 
  private:

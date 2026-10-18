@@ -137,6 +137,14 @@ static py::dict ToPy(const ContextGraphState &graph) {
   return out;
 }
 
+static py::dict ToPy(const KeywordTokenScore &token) {
+  py::dict out;
+  out["token"] = token.token;
+  out["piece"] = Utf8(token.piece);
+  out["log_prob"] = token.log_prob;
+  return out;
+}
+
 static py::dict ToPy(const KeywordHypothesisState &hypothesis) {
   py::dict out;
   out["level"] = hypothesis.level;
@@ -157,6 +165,13 @@ static py::dict ToPy(const KeywordFrameState &frame) {
   out["frame_index"] = frame.frame_index;
   out["level"] = frame.level;
   out["score"] = frame.score;
+  out["energy_db"] = frame.energy_db;
+  out["encoder_norm"] = frame.encoder_norm;
+  py::list top_tokens;
+  for (const auto &token : frame.top_tokens) {
+    top_tokens.append(ToPy(token));
+  }
+  out["top_tokens"] = top_tokens;
   py::list hypotheses;
   for (const auto &hypothesis : frame.hypotheses) {
     hypotheses.append(ToPy(hypothesis));

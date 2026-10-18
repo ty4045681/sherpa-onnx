@@ -6,6 +6,7 @@
 #define SHERPA_ONNX_CSRC_KEYWORD_SPOTTER_TRANSDUCER_IMPL_H_
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <regex>  // NOLINT
 #include <string>
@@ -259,7 +260,18 @@ class KeywordSpotterTransducerImpl : public KeywordSpotterImpl {
     auto pair = model_->RunEncoder(std::move(x), std::move(states),
                                    std::move(processed_frames));
 
-    decoder_->Decode(std::move(pair.first), ss, &results);
+    // One input-energy value per encoder output frame, measured from the same
+    // feature block the encoder consumed.
+    const int32_t subsampling = std::max(1, model_->SubsamplingFactor());
+    std::vector<std::vector<float>> frame_energy_db(n);
+    for (int32_t i = 0; i != n; ++i) {
+      frame_energy_db[i] = FrameEnergyDb(
+          features_vec.data() +
+              static_cast<int64_t>(i) * chunk_size * feature_dim,
+          chunk_size, feature_dim, subsampling);
+    }
+
+    decoder_->Decode(std::move(pair.first), ss, frame_energy_db, &results);
 
     std::vector<std::vector<Ort::Value>> next_states =
         model_->UnStackStates(pair.second);
@@ -351,6 +363,9 @@ class KeywordSpotterTransducerImpl : public KeywordSpotterImpl {
       for (auto &hypothesis : frame.hypotheses) {
         FillHypothesis(&hypothesis);
       }
+      for (auto &token : frame.top_tokens) {
+        token.piece = Piece(token.token);
+      }
     }
     return state;
   }
@@ -434,6 +449,30 @@ class KeywordSpotterTransducerImpl : public KeywordSpotterImpl {
       return "";
     }
     return sym_[token];
+  }
+
+  std::vector<float> FrameEnergyDb(const float *features, int32_t chunk_size,
+                                   int32_t feature_dim,
+                                   int32_t subsampling) const {
+    std::vector<float> out;
+    out.reserve(chunk_size / subsampling + 1);
+    for (int32_t t = 0; t * subsampling < chunk_size; ++t) {
+      const int32_t end = std::min(chunk_size, (t + 1) * subsampling);
+      double sum = 0.0;
+      int32_t count = 0;
+      for (int32_t f = t * subsampling; f != end; ++f) {
+        for (int32_t d = 0; d != feature_dim; ++d) {
+          sum += std::exp(features[f * feature_dim + d]);
+          ++count;
+        }
+      }
+      if (count == 0) {
+        out.push_back(-100.0f);
+        continue;
+      }
+      out.push_back(static_cast<float>(10.0 * std::log10(sum / count)));
+    }
+    return out;
   }
 
   void FillHypothesis(KeywordHypothesisState *hypothesis) const {
