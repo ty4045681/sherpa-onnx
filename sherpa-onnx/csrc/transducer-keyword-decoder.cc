@@ -16,6 +16,15 @@
 
 namespace sherpa_onnx {
 
+namespace {
+
+// Frames kept per stream for the search-state snapshot. 128 subsampled frames
+// is 5.12 s at the 25 Hz encoder grid, enough for the live graph window with
+// headroom.
+constexpr int32_t kMaxRecentKeywordFrames = 128;
+
+}  // namespace
+
 TransducerKeywordResult TransducerKeywordDecoder::GetEmptyResult() const {
   int32_t context_size = model_->ContextSize();
   int32_t blank_id = 0;  // always 0
@@ -149,6 +158,49 @@ void TransducerKeywordDecoder::Decode(
       auto status = ss[b]->GetContextGraph()->IsMatched(best_hyp.context_state);
       bool matched = std::get<0>(status);
       const ContextState *matched_state = std::get<1>(status);
+
+      // Record the frame before a match resets the hypotheses, so the frame
+      // that triggered the keyword still reports the level it reached.
+      KeywordFrameState frame_state;
+      frame_state.frame_index = t + frame_offset;
+      frame_state.level =
+          best_hyp.context_state ? best_hyp.context_state->level : 0;
+      frame_state.score = best_hyp.log_prob;
+      frame_state.hypotheses.reserve(hyps.Size());
+      for (const auto &entry : hyps) {
+        const Hypothesis &h = entry.second;
+        KeywordHypothesisState h_state;
+        h_state.level = h.context_state ? h.context_state->level : 0;
+        h_state.token = h.context_state ? h.context_state->token : -1;
+        h_state.is_end = h.context_state ? h.context_state->is_end : false;
+        h_state.phrase = h.context_state ? h.context_state->phrase : "";
+        h_state.score = h.log_prob;
+        // Only the tail can matter: the matched units are the last level
+        // tokens, so a long silence must not copy the whole history into every
+        // frame. The timestamps and probabilities are suffixes of the same
+        // history, so trimming each by the same count keeps them aligned.
+        const size_t keep =
+            static_cast<size_t>(std::max<int32_t>(32, h_state.level + 4));
+        const size_t first = h.ys.size() > keep ? h.ys.size() - keep : 0;
+        h_state.tokens.reserve(h.ys.size() - first);
+        for (size_t i = first; i != h.ys.size(); ++i) {
+          h_state.tokens.push_back(static_cast<int32_t>(h.ys[i]));
+        }
+        const size_t t_first =
+            h.timestamps.size() > keep ? h.timestamps.size() - keep : 0;
+        h_state.timestamps.assign(h.timestamps.begin() + t_first,
+                                  h.timestamps.end());
+        const size_t p_first =
+            h.ys_probs.size() > keep ? h.ys_probs.size() - keep : 0;
+        h_state.token_probs.assign(h.ys_probs.begin() + p_first,
+                                   h.ys_probs.end());
+        frame_state.hypotheses.push_back(std::move(h_state));
+      }
+      auto &recent = (*result)[b].recent_frames;
+      if (static_cast<int32_t>(recent.size()) >= kMaxRecentKeywordFrames) {
+        recent.pop_front();
+      }
+      recent.push_back(std::move(frame_state));
 
       if (matched) {
         float ys_prob = 0.0;

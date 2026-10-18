@@ -109,6 +109,107 @@ Args:
     The stream to reset.
 )doc";
 
+static py::str Utf8(const std::string &text) {
+  return py::str(PyUnicode_DecodeUTF8(text.c_str(), text.size(), "ignore"));
+}
+
+static py::dict ToPy(const ContextGraphNodeState &node) {
+  py::dict out;
+  out["id"] = node.id;
+  out["token"] = node.token;
+  out["piece"] = Utf8(node.piece);
+  out["level"] = node.level;
+  out["is_end"] = node.is_end;
+  out["phrase"] = Utf8(node.phrase);
+  out["fail"] = node.fail;
+  out["next"] = py::cast(node.next);
+  return out;
+}
+
+static py::dict ToPy(const ContextGraphState &graph) {
+  py::dict out;
+  out["root"] = graph.root;
+  py::list nodes;
+  for (const auto &node : graph.nodes) {
+    nodes.append(ToPy(node));
+  }
+  out["nodes"] = nodes;
+  return out;
+}
+
+static py::dict ToPy(const KeywordHypothesisState &hypothesis) {
+  py::dict out;
+  out["level"] = hypothesis.level;
+  out["token"] = hypothesis.token;
+  out["piece"] = Utf8(hypothesis.piece);
+  out["is_end"] = hypothesis.is_end;
+  out["phrase"] = Utf8(hypothesis.phrase);
+  out["score"] = hypothesis.score;
+  out["tokens"] = py::cast(hypothesis.tokens);
+  out["pieces"] = py::cast(hypothesis.pieces);
+  out["timestamps"] = py::cast(hypothesis.timestamps);
+  out["token_probs"] = py::cast(hypothesis.token_probs);
+  return out;
+}
+
+static py::dict ToPy(const KeywordFrameState &frame) {
+  py::dict out;
+  out["frame_index"] = frame.frame_index;
+  out["level"] = frame.level;
+  out["score"] = frame.score;
+  py::list hypotheses;
+  for (const auto &hypothesis : frame.hypotheses) {
+    hypotheses.append(ToPy(hypothesis));
+  }
+  out["hypotheses"] = hypotheses;
+  return out;
+}
+
+static py::dict ToPy(const KeywordSearchState &state) {
+  py::dict out;
+  out["frame_offset"] = state.frame_offset;
+  out["best"] = ToPy(state.best);
+  py::list frames;
+  for (const auto &frame : state.frames) {
+    frames.append(ToPy(frame));
+  }
+  out["frames"] = frames;
+  return out;
+}
+
+static constexpr const char *kGetContextGraphDoc = R"doc(
+Return the keyword context graph of a stream.
+
+The graph is a flat node list walked breadth-first from the root. Each node
+carries its token and piece, its level (how many keyword units it consumed),
+its fail link, and the ids of its next nodes.
+
+Args:
+  stream:
+    The stream whose context graph to return.
+
+Returns:
+  A dict with a root id and a nodes list. A backend that cannot expose its
+  graph returns an empty node list.
+)doc";
+
+static constexpr const char *kGetSearchStateDoc = R"doc(
+Return the live keyword search state of a stream.
+
+The state is the decoder's own state: the best hypothesis and the last
+decoded frames, each with every active hypothesis (context level, token,
+score, token history and timestamps). It is read-only and never feeds the
+decision.
+
+Args:
+  stream:
+    The stream whose search state to return.
+
+Returns:
+  A dict with a frame offset, the best hypothesis and a frames list. A backend
+  that cannot expose its state returns an empty frames list.
+)doc";
+
 void PybindKeywordSpotter(py::module *m) {
   PybindKeywordResult(m);
   PybindKeywordSpotterConfig(m);
@@ -141,7 +242,19 @@ void PybindKeywordSpotter(py::module *m) {
           },
           py::call_guard<py::gil_scoped_release>())
       .def("get_result", &PyClass::GetResult, kGetResultDoc,
-           py::call_guard<py::gil_scoped_release>());
+           py::call_guard<py::gil_scoped_release>())
+      .def(
+          "get_context_graph",
+          [](const PyClass &self, OnlineStream *s) {
+            return ToPy(self.GetContextGraph(s));
+          },
+          py::arg("stream"), kGetContextGraphDoc)
+      .def(
+          "get_search_state",
+          [](const PyClass &self, OnlineStream *s) {
+            return ToPy(self.GetSearchState(s));
+          },
+          py::arg("stream"), kGetSearchStateDoc);
 }
 
 }  // namespace sherpa_onnx

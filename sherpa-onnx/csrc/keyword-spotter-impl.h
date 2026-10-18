@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "sherpa-onnx/csrc/keyword-spotter-state.h"
 #include "sherpa-onnx/csrc/keyword-spotter.h"
 #include "sherpa-onnx/csrc/online-stream.h"
 
@@ -37,6 +38,18 @@ class KeywordSpotterImpl {
   virtual void DecodeStreams(OnlineStream **ss, int32_t n) const = 0;
 
   virtual KeywordResult GetResult(OnlineStream *s) const = 0;
+
+  // The keyword context graph this backend searches. A backend that cannot
+  // observe its search state returns an empty graph instead of a guess.
+  virtual ContextGraphState GetContextGraph(OnlineStream * /*s*/) const {
+    return {};
+  }
+
+  // The live search state of one stream, empty on backends that cannot expose
+  // it. The state is read-only; it never feeds the decision.
+  virtual KeywordSearchState GetSearchState(OnlineStream * /*s*/) const {
+    return {};
+  }
 };
 
 }  // namespace sherpa_onnx

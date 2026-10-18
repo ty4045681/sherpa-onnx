@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "sherpa-onnx/csrc/features.h"
+#include "sherpa-onnx/csrc/keyword-spotter-state.h"
 #include "sherpa-onnx/csrc/online-model-config.h"
 #include "sherpa-onnx/csrc/online-stream.h"
 #include "sherpa-onnx/csrc/online-transducer-model-config.h"
@@ -140,6 +141,19 @@ class KeywordSpotter {
   void DecodeStreams(OnlineStream **ss, int32_t n) const;
 
   KeywordResult GetResult(OnlineStream *s) const;
+
+  /**
+   * Return the keyword context graph the given stream searches, as a flat node
+   * list with fail links. Empty when the backend cannot expose it.
+   */
+  ContextGraphState GetContextGraph(OnlineStream *s) const;
+
+  /**
+   * Return the live search state of the given stream: the best hypothesis and
+   * the last decoded frames with every active hypothesis. Empty when the
+   * backend cannot expose it. Read-only; the decision never reads it.
+   */
+  KeywordSearchState GetSearchState(OnlineStream *s) const;
 
  private:
   std::unique_ptr<KeywordSpotterImpl> impl_;

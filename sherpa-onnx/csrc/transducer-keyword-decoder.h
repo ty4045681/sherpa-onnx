@@ -5,10 +5,12 @@
 #ifndef SHERPA_ONNX_CSRC_TRANSDUCER_KEYWORD_DECODER_H_
 #define SHERPA_ONNX_CSRC_TRANSDUCER_KEYWORD_DECODER_H_
 
+#include <deque>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "sherpa-onnx/csrc/keyword-spotter-state.h"
 #include "sherpa-onnx/csrc/online-stream.h"
 #include "sherpa-onnx/csrc/online-transducer-model.h"
 
@@ -32,6 +34,10 @@ struct TransducerKeywordResult {
 
   // used only in modified beam_search
   Hypotheses hyps;
+
+  // The last frames of this stream's search, oldest first. Bounded by the
+  // decoder so a long stream cannot grow the snapshot without limit.
+  std::deque<KeywordFrameState> recent_frames;
 };
 
 class TransducerKeywordDecoder {

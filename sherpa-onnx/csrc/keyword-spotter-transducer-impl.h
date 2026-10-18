@@ -10,6 +10,7 @@
 #include <regex>  // NOLINT
 #include <string>
 #include <sstream>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -279,6 +280,81 @@ class KeywordSpotterTransducerImpl : public KeywordSpotterImpl {
                    s->GetNumFramesSinceStart());
   }
 
+  ContextGraphState GetContextGraph(OnlineStream *s) const override {
+    ContextGraphState state;
+    const ContextGraph *graph = s->GetContextGraph().get();
+    if (graph == nullptr) {
+      return state;
+    }
+
+    const ContextState *root = graph->Root();
+    std::unordered_map<const ContextState *, int32_t> ids;
+    std::vector<const ContextState *> order;
+    order.push_back(root);
+    ids[root] = 0;
+    for (size_t i = 0; i != order.size(); ++i) {
+      for (const auto &entry : order[i]->next) {
+        const ContextState *child = entry.second.get();
+        if (ids.find(child) == ids.end()) {
+          ids[child] = static_cast<int32_t>(order.size());
+          order.push_back(child);
+        }
+      }
+    }
+
+    state.root = 0;
+    state.nodes.resize(order.size());
+    for (size_t i = 0; i != order.size(); ++i) {
+      const ContextState *node = order[i];
+      ContextGraphNodeState &out = state.nodes[i];
+      out.id = static_cast<int32_t>(i);
+      out.token = node->token;
+      out.piece = Piece(node->token);
+      out.level = node->level;
+      out.is_end = node->is_end;
+      out.phrase = node->phrase;
+      auto fail = ids.find(node->fail);
+      out.fail = fail == ids.end() ? 0 : fail->second;
+      out.next.reserve(node->next.size());
+      for (const auto &entry : node->next) {
+        auto child = ids.find(entry.second.get());
+        if (child != ids.end()) {
+          out.next.push_back(child->second);
+        }
+      }
+    }
+    return state;
+  }
+
+  KeywordSearchState GetSearchState(OnlineStream *s) const override {
+    KeywordSearchState state;
+    TransducerKeywordResult result = s->GetKeywordResult(false);
+    state.frame_offset = result.frame_offset;
+
+    const Hypothesis &best = result.hyps.GetMostProbable(false);
+    state.best.level = best.context_state ? best.context_state->level : 0;
+    state.best.token = best.context_state ? best.context_state->token : -1;
+    state.best.is_end = best.context_state && best.context_state->is_end;
+    state.best.phrase = best.context_state ? best.context_state->phrase : "";
+    state.best.score = best.log_prob;
+    state.best.tokens.reserve(best.ys.size());
+    for (auto id : best.ys) {
+      state.best.tokens.push_back(static_cast<int32_t>(id));
+    }
+    state.best.timestamps = best.timestamps;
+    state.best.token_probs.assign(best.ys_probs.begin(), best.ys_probs.end());
+    FillHypothesis(&state.best);
+
+    state.frames.assign(result.recent_frames.begin(),
+                        result.recent_frames.end());
+    for (auto &frame : state.frames) {
+      for (auto &hypothesis : frame.hypotheses) {
+        FillHypothesis(&hypothesis);
+      }
+    }
+    return state;
+  }
+
  private:
   void InitKeywords(std::istream &is) {
     if (!EncodeKeywords(is, sym_, &keywords_id_, &keywords_, &boost_scores_,
@@ -351,6 +427,22 @@ class KeywordSpotterTransducerImpl : public KeywordSpotterImpl {
 
     stream->SetKeywordResult(r);
     stream->SetStates(model_->GetEncoderInitStates());
+  }
+
+  std::string Piece(int32_t token) const {
+    if (token < 0 || !sym_.Contains(token)) {
+      return "";
+    }
+    return sym_[token];
+  }
+
+  void FillHypothesis(KeywordHypothesisState *hypothesis) const {
+    hypothesis->piece = Piece(hypothesis->token);
+    hypothesis->pieces.clear();
+    hypothesis->pieces.reserve(hypothesis->tokens.size());
+    for (auto token : hypothesis->tokens) {
+      hypothesis->pieces.push_back(Piece(token));
+    }
   }
 
  private:

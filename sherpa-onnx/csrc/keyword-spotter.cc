@@ -176,6 +176,14 @@ KeywordResult KeywordSpotter::GetResult(OnlineStream *s) const {
   return impl_->GetResult(s);
 }
 
+ContextGraphState KeywordSpotter::GetContextGraph(OnlineStream *s) const {
+  return impl_->GetContextGraph(s);
+}
+
+KeywordSearchState KeywordSpotter::GetSearchState(OnlineStream *s) const {
+  return impl_->GetSearchState(s);
+}
+
 #if __ANDROID_API__ >= 9
 template KeywordSpotter::KeywordSpotter(AAssetManager *mgr,
                                         const KeywordSpotterConfig &config);

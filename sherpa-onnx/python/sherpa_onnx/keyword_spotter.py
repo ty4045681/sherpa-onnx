@@ -274,3 +274,36 @@ class KeywordSpotter(object):
           corresponding token.
         """
         return self.keyword_spotter.get_result(s).timestamps
+
+    def get_context_graph(self, s: OnlineStream) -> dict:
+        """Get the keyword context graph the stream searches.
+
+        The graph is the spotter's own context graph, not a reconstruction:
+        one node per keyword token prefix, with fail links and end nodes.
+
+        Args:
+          s:
+            The stream whose context graph to read.
+        Returns:
+          A dict with a root id and a nodes list. Each node carries its token
+          and piece, its level, its fail link and the ids of its next nodes.
+          A backend that cannot expose its graph returns an empty node list.
+        """
+        return self.keyword_spotter.get_context_graph(s)
+
+    def get_search_state(self, s: OnlineStream) -> dict:
+        """Get the live search state the decoder holds for the stream.
+
+        This is the decoder's own state. The best hypothesis and the last
+        decoded frames are read from the stream; nothing is recomputed.
+
+        Args:
+          s:
+            The stream whose search state to read.
+        Returns:
+          A dict with a frame offset, the best hypothesis and a frames list.
+          Each hypothesis carries its context level, token, score, and token
+          history with timestamps. A backend that cannot expose its state
+          returns an empty frames list.
+        """
+        return self.keyword_spotter.get_search_state(s)
